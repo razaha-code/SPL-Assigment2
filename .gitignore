@@ -1,0 +1,35 @@
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Java / Maven
+/target/
+*.class
+*.jar
+*.war
+*.ear
+
+# IDEs and editors
+/.idea/
+/.vscode/
+*.iml
+*.ipr
+*.iws
+*.classpath
+*.project
+
+# Logs, temp
+*.log
+*.tmp
+*.bak
+
+# Build/system files
+/out/
+/.settings/
+
+# Node/npm (if ever used in repo)
+node_modules/
+
+# Keep user-specific local files out
+.env
