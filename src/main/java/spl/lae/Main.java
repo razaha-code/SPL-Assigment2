@@ -6,5 +6,15 @@ import parser.*;
 public class Main {
     public static void main(String[] args) throws IOException {
       // TODO: main
+      
+      InputParser input = new InputParser();
+      input.parse();
+      // here is my comment
+
+  
+      
+
+
+
     }
 }
