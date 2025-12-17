@@ -9,14 +9,8 @@ public class Main {
       
       InputParser input = new InputParser();
       input.parse();
-      // here is my comment
-      // another comment ido
 
 
   
-      
-
-
-
     }
 }
