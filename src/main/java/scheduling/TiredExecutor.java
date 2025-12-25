@@ -1,9 +1,7 @@
 package scheduling;
 
-import java.util.concurrent.PriorityBlockingQueue;
-import java.util.ArrayList;
-import java.util.List;
 import static java.lang.String.format;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TiredExecutor {
@@ -12,50 +10,70 @@ public class TiredExecutor {
     private final PriorityBlockingQueue<TiredThread> idleMinHeap = new PriorityBlockingQueue<>();
     private final AtomicInteger inFlight = new AtomicInteger(0);
 
+    
+
     public TiredExecutor(int numThreads) {
         // TODO
         this.workers = new TiredThread[numThreads];
         for (int i = 0; i < numThreads; i++) {
             this.workers[i] = new TiredThread(i,0);
-            workers[i].start();
             this.idleMinHeap.put(workers[i]);
         }
+        this.start();
+    }
+    private void start() {
+    for (TiredThread worker : workers) {
+        worker.start();
+    }
+}
+
+    public void submit(Runnable task) {
+    TiredThread worker;
+    try {
+        // 1. השגת עובד פנוי (חוסם אם אין)
+        worker = idleMinHeap.take();
+    } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
     }
 
-    public void submit(Runnable task) { // לחזור לזה
-        // TODO: submit a single task to be executed
+    inFlight.incrementAndGet(); // סימון שמשימה יצאה לדרך
 
-            TiredThread worker = idleMinHeap.take();
-            inFlight.incrementAndGet();
-            Runnable wrapperTask = () -> {
-                try {
-                    worker.newTask(task);
-                    
-                } finally {
-                    idleMinHeap.put(worker);
-                    inFlight.decrementAndGet();
-                    if (inFlight.get() == 0) {
-                        synchronized (this) {
-                            this.notifyAll();
-                        }
-                    }
+    // 2. יצירת המעטפה (Wrapper)
+    Runnable wrapperTask = () -> {
+        try {
+            // התיקון: מריצים את המשימה האמיתית כאן!
+            task.run(); 
+        } finally {
+            // החזרת העובד ועדכון מונים
+            idleMinHeap.put(worker);
+            
+            if (inFlight.decrementAndGet() == 0) {
+                // הערה: וודא שזה אותו האובייקט ש-submitAll מחכה עליו!
+                // אם submitAll מחכה על 'this', אז זה מעולה.
+                synchronized (this) { 
+                    this.notifyAll();
                 }
             }
+        }
+    };
 
-
-            
-        
-    }
-
+    worker.newTask(wrapperTask);
+}
     public  void submitAll(Iterable<Runnable> tasks) { // לחזור לזה
         // TODO: submit tasks one by one and wait until all finish
         for (Runnable task : tasks) {
             this.submit(task);
         }
 
-        synchronized (this) {   
+        synchronized (this) {
             while (inFlight.get() > 0) {
-                this.wait();
+                try {
+                    this.wait();
+                } catch (InterruptedException e) {
+                    // במקרה של הפרעה בזמן המתנה, משחזרים את הסטטוס ויוצאים
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }
