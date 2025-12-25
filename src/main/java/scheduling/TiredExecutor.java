@@ -17,34 +17,52 @@ public class TiredExecutor {
         this.workers = new TiredThread[numThreads];
         for (int i = 0; i < numThreads; i++) {
             this.workers[i] = new TiredThread(i,0);
+            workers[i].start();
             this.idleMinHeap.put(workers[i]);
         }
     }
 
-    public synchronized void submit(Runnable task) { // לחזור לזה
-        // TODO
-        while(idleMinHeap.isEmpty()) {
-                wait();
-            }
-            Thread worker = idleMinHeap.poll();
-            worker.newTask(task);
+    public void submit(Runnable task) { // לחזור לזה
+        // TODO: submit a single task to be executed
+
+            TiredThread worker = idleMinHeap.take();
             inFlight.incrementAndGet();
+            Runnable wrapperTask = () -> {
+                try {
+                    worker.newTask(task);
+                    
+                } finally {
+                    idleMinHeap.put(worker);
+                    inFlight.decrementAndGet();
+                    if (inFlight.get() == 0) {
+                        synchronized (this) {
+                            this.notifyAll();
+                        }
+                    }
+                }
+            }
+
+
+            
         
     }
 
-    public synchronized void submitAll(Iterable<Runnable> tasks) { // לחזור לזה
+    public  void submitAll(Iterable<Runnable> tasks) { // לחזור לזה
         // TODO: submit tasks one by one and wait until all finish
         for (Runnable task : tasks) {
-            while(idleMinHeap.isEmpty()) {
-                wait();
-            }
             this.submit(task);
+        }
+
+        synchronized (this) {   
+            while (inFlight.get() > 0) {
+                this.wait();
+            }
         }
     }
 
-    public synchronized void shutdown() throws InterruptedException { // get back to
+    public  void shutdown() throws InterruptedException { // get back to
         // TODO
-        this.notifyAll();
+        idleMinHeap.clear();
         for (TiredThread worker : workers) {
             worker.shutdown();
         }
