@@ -16,16 +16,18 @@ public class TiredExecutor {
         // TODO
         this.workers = new TiredThread[numThreads];
         for (int i = 0; i < numThreads; i++) {
-            this.workers[i] = new TiredThread(i,0);
+            double randomFatigueFactor = 0.5 + (Math.random() * 1.0); // (0.5 to 1.5)
+            this.workers[i] = new TiredThread(i, randomFatigueFactor);
             this.idleMinHeap.put(workers[i]);
         }
         this.start();
     }
+    
     private void start() {
-    for (TiredThread worker : workers) {
-        worker.start();
+        for (TiredThread worker : workers) {
+            worker.start();
+        }
     }
-}
 
     public void submit(Runnable task) {
     TiredThread worker;
@@ -78,11 +80,23 @@ public class TiredExecutor {
         }
     }
 
-    public  void shutdown() throws InterruptedException { // get back to
-        // TODO
-        idleMinHeap.clear();
+    public void shutdown() throws InterruptedException {
+        // Step 1: Send shutdown signal (poison pill) to all workers
         for (TiredThread worker : workers) {
             worker.shutdown();
+        }
+
+        // Step 2: Wait for all workers to finish their current tasks and terminate
+        for (TiredThread worker : workers) {
+            try {
+                worker.join();
+            } catch (InterruptedException e) {
+                // If the main thread is interrupted while waiting, preserve the status
+                Thread.currentThread().interrupt();
+                // We might choose to break here or continue trying to join others.
+                // Re-throwing or breaking is safer to respect the interrupt.
+                throw e; 
+            }
         }
     }
 
