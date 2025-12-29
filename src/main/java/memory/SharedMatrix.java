@@ -10,49 +10,83 @@ public class SharedMatrix {
     }
 
     public SharedMatrix(double[][] matrix) {
-        loadMatrix(matrix, VectorOrientation.ROW_MAJOR); // שימוש בפונקציית עזר למניעת שכפול קוד
-    }
-
-    // פונקציית עזר פרטית לטעינת מטריצה (מונעת שכפול קוד בין הבנאי ל-loadRowMajor)
-    private void loadMatrix(double[][] matrix, VectorOrientation orientation) {
-        if (matrix == null) {
-            throw new IllegalArgumentException("matrix must be non-null");
-        }
-
-        SharedVector[] newvectors = new SharedVector[matrix.length];
-
-        for (int i = 0; i < matrix.length; i++) {
-            if (matrix[i] == null) {
-                throw new IllegalArgumentException("All Rows must be non-null");
-            }
-            if (i > 0 && matrix[i].length != matrix[i - 1].length) {
-                throw new IllegalArgumentException(
-                    "Rows " + i + " and " + (i - 1) + " must have the same length"
-                );
-            }
-
-            double[] rowCopy = matrix[i].clone();
-            newvectors[i] = new SharedVector(rowCopy, orientation);
-        }
-        
-        this.vectors = newvectors;
+        loadRowMajor(matrix);
     }
 
     public void loadRowMajor(double[][] matrix) {
-        loadMatrix(matrix, VectorOrientation.ROW_MAJOR);
+        if (matrix == null) {
+            throw new IllegalArgumentException("matrix must be non-null");
+        }
+        
+        // Handle empty matrix
+        if (matrix.length == 0) {
+            this.vectors = new SharedVector[0];
+            return;
+        }
+
+        int rows = matrix.length;
+        
+        // Initialize internal array to hold 'rows' number of vectors
+        SharedVector[] newvectors = new SharedVector[rows];
+
+        for (int r = 0; r < rows; r++) {
+            if (matrix[r] == null) {
+                throw new IllegalArgumentException("All rows must be non-null");
+            }
+            if (r > 0 && matrix[r].length != matrix[r-1].length) {
+                throw new IllegalArgumentException("All rows must have the same length");
+            }
+
+            // Simple copy: The row in the 2D array becomes the vector
+            double[] rowCopy = matrix[r].clone();
+            newvectors[r] = new SharedVector(rowCopy, VectorOrientation.ROW_MAJOR);
+        }
+        this.vectors = newvectors;
     }
 
     public void loadColumnMajor(double[][] matrix) {
-        loadMatrix(matrix, VectorOrientation.COLUMN_MAJOR);
+        if (matrix == null) {
+            throw new IllegalArgumentException("matrix must be non-null");
+        }
+        
+        // Handle empty matrix case
+        if (matrix.length == 0) {
+            this.vectors = new SharedVector[0];
+            return;
+        }
+
+        int rows = matrix.length;
+        int cols = matrix[0].length;
+
+        // Initialize the internal array to hold 'cols' number of vectors
+        // (since we are storing columns)
+        SharedVector[] newvectors = new SharedVector[cols];
+
+        for (int c = 0; c < cols; c++) {
+            double[] columnData = new double[rows];
+
+            // Harvest data for the current column from all rows
+            for (int r = 0; r < rows; r++) {
+                if (matrix[r] == null || matrix[r].length != cols) {
+                    throw new IllegalArgumentException("All rows must be non-null and have the same length");
+                }
+                // Transpose logic: matrix[row][col] -> columnData[row]
+                columnData[r] = matrix[r][c];
+            }
+
+            // Create the vector with the correct orientation
+            newvectors[c] = new SharedVector(columnData, VectorOrientation.COLUMN_MAJOR);
+        }
+        this.vectors = newvectors;
     }
 
     public double[][] readRowMajor() {
-        SharedVector[] currentVectors = this.vectors; // העתק מקומי למניעת בעיות אם vectors מתחלף באמצע
+        SharedVector[] currentVectors = this.vectors; // snapshot of current vectors
         double[][] result = new double[currentVectors.length][];
         
         for (int i = 0; i < currentVectors.length; i++) {
             SharedVector vec = currentVectors[i];
-            vec.readLock(); // נועלים רק לקריאה
+            vec.readLock();
             try {
                 
                 double[] vecData = new double[vec.length()];
@@ -80,7 +114,7 @@ public class SharedMatrix {
 
     public VectorOrientation getOrientation() {
         if (vectors.length == 0) {
-            return VectorOrientation.ROW_MAJOR; // ברירת מחדל למטריצה ריקה
+            return VectorOrientation.ROW_MAJOR; // default orientation for empty matrix
         }
         return vectors[0].getOrientation();
     }
@@ -93,7 +127,7 @@ public class SharedMatrix {
                 vecs[i].readLock();
             }
         } catch (Exception e) {
-            // שחרור רק של מה שהצלחנו לנעול עד כה
+            // If an exception occurs, release all previously acquired locks
             for (int j = 0; j < i; j++) {
                 try { vecs[j].readUnlock(); } catch (Exception ignored) {}
             }
@@ -101,7 +135,6 @@ public class SharedMatrix {
         }
     }
     
-    // בשיטות השחרור אין בעיה, כי משחררים הכל בסוף פעולה תקינה
     private void releaseAllVectorReadLocks(SharedVector[] vecs) {
         for (SharedVector vec : vecs) {
             vec.readUnlock();
@@ -116,7 +149,7 @@ public class SharedMatrix {
                 vecs[i].writeLock();
             }
         } catch (Exception e) {
-            // שחרור רק של מה שהצלחנו לנעול עד כה
+            // If an exception occurs, release all previously acquired locks
             for (int j = 0; j < i; j++) {
                 try { vecs[j].writeUnlock(); } catch (Exception ignored) {}
             }
