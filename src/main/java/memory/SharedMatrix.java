@@ -107,6 +107,7 @@ public class SharedMatrix {
             vec.readUnlock();
         }
     }
+    
     private void acquireAllVectorWriteLocks(SharedVector[] vecs) {
         // TODO: acquire write lock for each vector
           int i = 0;

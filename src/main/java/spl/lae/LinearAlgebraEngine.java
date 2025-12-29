@@ -4,6 +4,7 @@ package spl.lae;
 import java.util.List;
 
 import memory.SharedMatrix;
+import memory.SharedVector;
 import parser.ComputationNode;
 import parser.ComputationNodeType;
 import scheduling.TiredExecutor;
@@ -21,97 +22,226 @@ public class LinearAlgebraEngine {
     }
 
     public ComputationNode run(ComputationNode computationRoot) {
-
-        // TODO: resolve computation tree step by step until final matrix is produced
-
-        ComputationNodeType nodeType = computationRoot.getNodeType();
-        if (nodeType == ComputationNodeType.MATRIX) {
+    // If the root is already a concrete matrix, no computation is needed
+        if (computationRoot.getNodeType() == ComputationNodeType.MATRIX) {
             return computationRoot;
-
-        }  else {
-
-            computationRoot.associativeNesting();
-            ComputationNode Resolver = computationRoot.findResolvable();
-            Resolver.getNodeType();
-            // לסנכרן פה את המטריצות המוחזרות לילדיי הצומת
-            while (Resolver != null && Resolver.getNodeType() != ComputationNodeType.MATRIX) {
-                loadAndCompute(Resolver);
-                computationRoot.associativeNesting();
-                Resolver = computationRoot.findResolvable();
-            }
-            return Resolver;
         }
-
+        while (computationRoot.getNodeType() != ComputationNodeType.MATRIX) {
+            // Find the next node ready for computation (all children are matrices)
+            ComputationNode resolver = computationRoot.findResolvable();
+            if (resolver == null) {
+                break; 
+            }
+            // Handle operations with >2 operands (e.g., A+B+C -> (A+B)+C)
+            resolver.associativeNesting();
+            // Check if the node is still resolvable after nesting.
+            // Nesting might have introduced a new operator node as a child.
+            boolean isStillResolvable = true;
+            for (ComputationNode child : resolver.getChildren()) {
+                if (child.getNodeType() != ComputationNodeType.MATRIX) {
+                    isStillResolvable = false;
+                    break;
+                }
+            }
+            // Only compute if all children are concrete matrices
+            if (isStillResolvable) {
+                loadAndCompute(resolver);
+            }
+        }
+        try {
+            executor.shutdown();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return computationRoot;
     }
 
     public void loadAndCompute(ComputationNode node) {
         // TODO: load operand matrices
         // TODO: create compute tasks & submit tasks to executor
-
+        // 1. Load operand matrices into shared memory
         for (int i = 0; i < node.getChildren().size(); i++) {
             ComputationNode child = node.getChildren().get(i);
             double[][] childMatrix = child.getMatrix();
+
             if (i == 0) {
+                // Left matrix is always loaded in Row-Major order
                 leftMatrix.loadRowMajor(childMatrix);
             } 
             else if (i == 1) {
-                rightMatrix.loadRowMajor(childMatrix);
+                // Optimization: For multiplication, load the right matrix in Column-Major order
+                // to facilitate dot-product calculations (row vs column vectors).
+                if (node.getNodeType() == ComputationNodeType.MULTIPLY) {
+                    rightMatrix.loadColumnMajor(childMatrix);
+                } else {
+                    rightMatrix.loadRowMajor(childMatrix);
+                }
             }
         }
 
+        // 2. Create computation tasks based on the operator
+        List<Runnable> tasks = null;
         if (node.getNodeType() == ComputationNodeType.ADD) {
-            List<Runnable> tasks = createAddTasks();
-            executor.submitAll(tasks);
+            tasks = createAddTasks();
         }
-
         else if (node.getNodeType() == ComputationNodeType.NEGATE) {
-            List<Runnable> tasks = createNegateTasks();
-            executor.submitAll(tasks);
-        }
-        else if (node.getNodeType() == ComputationNodeType.TRANSPOSE) {
-            List<Runnable> tasks = createTransposeTasks();
-            executor.submitAll(tasks);
+            tasks = createNegateTasks();
         }
         else if (node.getNodeType() == ComputationNodeType.MULTIPLY) {
-            List<Runnable> tasks = createMultiplyTasks();
-            executor.submitAll(tasks);
-            
+            tasks = createMultiplyTasks();
         }
-        // לסנכרן פה את המטריצות המוחזרות לילדיי הצומת
-        for (int i = 0; i < node.getChildren().size(); i++) {
-            if(i == 0){
-                node.getChildren().get(i).resolve(leftMatrix.readRowMajor());
-            }
-            else if (i == 1){
-                node.getChildren().get(i).resolve(rightMatrix.readRowMajor());
-            }            
+        else if (node.getNodeType() == ComputationNodeType.TRANSPOSE) {
+            tasks = createTransposeTasks();
         }
 
+        // 3. Submit tasks to the thread pool and wait for completion
+        if (tasks != null && !tasks.isEmpty()) executor.submitAll(tasks);
+        
+        // 4. Retrieve the result and resolve the current node
+        node.resolve(leftMatrix.readRowMajor());
     }
     
     public List<Runnable> createAddTasks() {
-
         // TODO: return tasks that perform row-wise addition
+        List<Runnable> tasks = new java.util.ArrayList<>();
 
+        // 1. Validation: Check if matrices have compatible dimensions and orientation
+        if (leftMatrix.length() != rightMatrix.length()) {
+            throw new IllegalArgumentException("Matrix row count mismatch");
+        }
+        
+        if (leftMatrix.length() > 0) {
+            if (leftMatrix.get(0).getOrientation() != rightMatrix.get(0).getOrientation()) {
+                throw new IllegalArgumentException("Orientation mismatch: Both matrices must have the same orientation");
+            }
+            if (leftMatrix.get(0).length() != rightMatrix.get(0).length()) {
+                throw new IllegalArgumentException("Matrix column count mismatch");
+            }
+        }
 
-        return null;
+        // 2. Task Creation: Create a task for each vector (row/column)
+        for (int i = 0; i < leftMatrix.length(); i++) {
+            final int rowIndex = i;
+            
+            Runnable task = () -> {
+                SharedVector leftVector = leftMatrix.get(rowIndex);
+                SharedVector rightVector = rightMatrix.get(rowIndex);
+
+                // Locking: We are modifying 'left' (WriteLock) and reading 'right' (ReadLock)
+                leftVector.writeLock();
+                try {
+                    rightVector.readLock();
+                    try {
+                        leftVector.add(rightVector);
+                    } finally {
+                        rightVector.readUnlock();
+                    }
+                } finally {
+                    leftVector.writeUnlock();
+                }
+            };
+            
+            tasks.add(task);
+        }
+        return tasks;
     }
 
     public List<Runnable> createMultiplyTasks() {
         // TODO: return tasks that perform row × matrix multiplication
+        List<Runnable> tasks = new java.util.ArrayList<>();
 
-        return null;
+        // 1. Validation
+        if (leftMatrix.length() == 0 || rightMatrix.length() == 0) return tasks;
+
+        // Check inner dimensions (Left Width == Right Height)
+        if (leftMatrix.get(0).length() != rightMatrix.get(0).length()) {
+            throw new IllegalArgumentException("Matrix dimension mismatch: Inner dimensions must agree.");
+        }
+
+        int rowCount = leftMatrix.length();
+
+        // 2. Task Creation: One task per row of the left matrix
+        for (int i = 0; i < rowCount; i++) {
+            final int rowIdx = i;
+
+            Runnable worker = () -> {
+                SharedVector currentRow = leftMatrix.get(rowIdx);
+
+                // Acquire Write Lock on the target row (since it will be modified in-place)
+                currentRow.writeLock();
+                try {
+                    int rLength = rightMatrix.length();
+
+                    // Acquire Read Locks for ALL vectors in the right matrix
+                    for (int j = 0; j < rLength; j++) {
+                        rightMatrix.get(j).readLock();
+                    }
+
+                    try {
+                        currentRow.vecMatMul(rightMatrix);
+
+                    } finally {
+                        // Release Read Locks for all vectors in the right matrix
+                        for (int j = 0; j < rLength; j++) {
+                            rightMatrix.get(j).readUnlock();
+                        }
+                    }
+                } finally {
+                    // Release Write Lock on the target row
+                    currentRow.writeUnlock();
+                }
+            };
+            tasks.add(worker);
+        }
+        return tasks;
     }
 
     public List<Runnable> createNegateTasks() {
         // TODO: return tasks that negate rows
-        return null;
+        List<Runnable> tasks = new java.util.ArrayList<>();
+
+        // Task Creation: Create a task for each vector (row/column)
+        for (int i = 0; i < leftMatrix.length(); i++) {
+            final int rowIndex = i;
+            
+            Runnable task = () -> {
+                SharedVector vector = leftMatrix.get(rowIndex);
+                // Locking: We are modifying 'left' (WriteLock)
+                vector.writeLock();
+                try {
+                    vector.negate();
+                } finally {
+                    vector.writeUnlock();
+                }
+            };
+            
+            tasks.add(task);
+        }
+        return tasks;
     }
 
     public List<Runnable> createTransposeTasks() {
         // TODO: return tasks that transpose rows
-
-        return null;
+        List<Runnable> tasks = new java.util.ArrayList<>();
+        // 1. Validation: Return empty task list if matrix is empty
+        if (leftMatrix.length() == 0) return tasks;
+        // 2. Task Creation: Create one task per ORIGINAL row
+        for (int i = 0; i < leftMatrix.length(); i++) {
+            final int rowIndex = i;
+            Runnable task = () -> {
+                SharedVector rowVec = leftMatrix.get(rowIndex);
+                rowVec.writeLock();
+                try {
+                    // source[i][j] becomes destination[j][i]
+                    rowVec.transpose();
+                    }
+                finally {
+                    rowVec.writeUnlock();
+                }
+            };
+            tasks.add(task);
+        }
+        return tasks;
     }
 
     public String getWorkerReport() {
