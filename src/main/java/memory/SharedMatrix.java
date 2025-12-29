@@ -19,6 +19,7 @@ public class SharedMatrix {
         }
         
         // Handle empty matrix
+        //
         if (matrix.length == 0) {
             this.vectors = new SharedVector[0];
             return;

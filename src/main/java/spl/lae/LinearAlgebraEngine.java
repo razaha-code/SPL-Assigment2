@@ -188,6 +188,7 @@ public class LinearAlgebraEngine {
                     }
                 } finally {
                     // Release Write Lock on the target row
+                    //
                     currentRow.writeUnlock();
                 }
             };
