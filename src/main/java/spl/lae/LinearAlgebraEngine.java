@@ -1,7 +1,9 @@
 package spl.lae;
 
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import memory.SharedMatrix;
 import memory.SharedVector;
@@ -69,8 +71,6 @@ public class LinearAlgebraEngine {
                 leftMatrix.loadRowMajor(childMatrix);
             } 
             else if (i == 1) {
-                // Optimization: For multiplication, load the right matrix in Column-Major order
-                // to facilitate dot-product calculations (row vs column vectors).
                 if (node.getNodeType() == ComputationNodeType.MULTIPLY) {
                     rightMatrix.loadColumnMajor(childMatrix);
                 } else {
@@ -188,6 +188,7 @@ public class LinearAlgebraEngine {
                     }
                 } finally {
                     // Release Write Lock on the target row
+                    //
                     currentRow.writeUnlock();
                 }
             };
@@ -222,21 +223,46 @@ public class LinearAlgebraEngine {
 
     public List<Runnable> createTransposeTasks() {
         // TODO: return tasks that transpose rows
-        List<Runnable> tasks = new java.util.ArrayList<>();
-        // 1. Validation: Return empty task list if matrix is empty
+        List<Runnable> tasks = new ArrayList<>();
+        
+        // 1. Validation
         if (leftMatrix.length() == 0) return tasks;
-        // 2. Task Creation: Create one task per ORIGINAL row
-        for (int i = 0; i < leftMatrix.length(); i++) {
-            final int rowIndex = i;
+        int originalRows = leftMatrix.length();
+        int originalCols = leftMatrix.get(0).length();
+        
+        // 2. Prepare a temporary array to hold the transposed data.
+        // This array is local to the function scope but effectively final, so tasks can access it.
+        double[][] tempMatrix = new double[originalCols][originalRows];
+        
+        // 3. Atomic counter to track completion of tasks.
+        // This ensures thread-safe coordination to update the main matrix only once.
+        AtomicInteger completionCounter = new AtomicInteger(0);
+        int totalTasks = originalCols;
+        
+        // 4. Task Creation: Create one task per NEW row (which corresponds to an ORIGINAL column)
+        for (int i = 0; i < originalCols; i++) {
+            final int newRowIndex = i;
             Runnable task = () -> {
-                SharedVector rowVec = leftMatrix.get(rowIndex);
-                rowVec.writeLock();
-                try {
-                    // source[i][j] becomes destination[j][i]
-                    rowVec.transpose();
+                double[] newRowData = new double[originalRows];
+                // Harvest data: collect the i-th element from every original row
+                for (int r = 0; r < originalRows; r++) {
+                    SharedVector oldRow = leftMatrix.get(r);
+                    oldRow.readLock();
+                    try {
+                        newRowData[r] = oldRow.get(newRowIndex);
+                    } finally {
+                        oldRow.readUnlock();
                     }
-                finally {
-                    rowVec.writeUnlock();
+                }
+
+                // Store the result in the shared temporary matrix.
+                // No locking needed here as each task writes to a unique index.
+                tempMatrix[newRowIndex] = newRowData;
+
+                // 5. Finalize: The last task to finish updates the main matrix.
+                if (completionCounter.incrementAndGet() == totalTasks) {
+                    // Critical Section: Replace the internal structure of leftMatrix with the transposed one.
+                    leftMatrix.loadRowMajor(tempMatrix);
                 }
             };
             tasks.add(task);
