@@ -223,17 +223,21 @@ public class LinearAlgebraEngine {
     public List<Runnable> createTransposeTasks() {
         // TODO: return tasks that transpose rows
         List<Runnable> tasks = new ArrayList<>();
+        
         // 1. Validation
         if (leftMatrix.length() == 0) return tasks;
         int originalRows = leftMatrix.length();
         int originalCols = leftMatrix.get(0).length();
+        
         // 2. Prepare a temporary array to hold the transposed data.
         // This array is local to the function scope but effectively final, so tasks can access it.
         double[][] tempMatrix = new double[originalCols][originalRows];
+        
         // 3. Atomic counter to track completion of tasks.
         // This ensures thread-safe coordination to update the main matrix only once.
         AtomicInteger completionCounter = new AtomicInteger(0);
         int totalTasks = originalCols;
+        
         // 4. Task Creation: Create one task per NEW row (which corresponds to an ORIGINAL column)
         for (int i = 0; i < originalCols; i++) {
             final int newRowIndex = i;
