@@ -13,7 +13,7 @@ public class Main {
       OutputWriter outputWriter = new OutputWriter();
       parser.InputParser parserworker = new parser.InputParser();
       try { 
-          parser.ComputationNode root = parserworker.parse("example6.json");
+          parser.ComputationNode root = parserworker.parse("example.json");
           answerNode = engine.run(root);
           System.out.println(engine.getWorkerReport());
       } catch (java.text.ParseException e) {

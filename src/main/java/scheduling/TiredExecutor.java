@@ -1,6 +1,5 @@
 package scheduling;
 
-import static java.lang.String.format;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -101,18 +100,43 @@ public class TiredExecutor {
     }
 
     public synchronized String getWorkerReport() {
-        // TODO: return readable statistics for each worker
-        String ans = "";
-
-        for (TiredThread worker : workers) {
-            // collect stats
-           ans += format("Worker %d: Time Used = %d ns, Time Idle = %d ns, Fatigue = %.2f\n",
-                   worker.getWorkerId(),
-                   worker.getTimeUsed(),
-                   worker.getTimeIdle(),
-                   worker.getFatigue());
-
-        }
-        return ans;
+    // 1️⃣ חשב פטיגים
+    double[] fatigues = new double[workers.length];
+    double sum = 0.0;
+    for (int i = 0; i < workers.length; i++) {
+        fatigues[i] = workers[i].getFatigue();
+        sum += fatigues[i];
     }
+
+    double avg = (workers.length == 0 ? 0 : sum / workers.length);
+
+    double fairnessScore = 0.0;
+    for (double f : fatigues) {
+        fairnessScore += Math.pow(f - avg, 2);
+    }
+
+    String ans = "";
+    ans += String.format("Executor fairness score = %.5f\n", fairnessScore);
+    ans += String.format("Average fatigue = %.5f\n", avg);
+    ans += "----------------------------------------\n";
+
+    for (int i = 0; i < workers.length; i++) {
+        TiredThread w = workers[i];
+        double diff = fatigues[i] - avg;
+        double sq = diff * diff;
+
+        ans += String.format(
+            "Worker %d: TimeUsed=%d ns, TimeIdle=%d ns, Fatigue=%.5f, std=%.5f, variance=%.5f\n",
+            w.getWorkerId(),
+            w.getTimeUsed(),
+            w.getTimeIdle(),
+            fatigues[i],
+            diff,
+            sq
+        );
+    }
+
+    return ans;
+}
+
 }
